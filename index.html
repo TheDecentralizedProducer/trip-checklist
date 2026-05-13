@@ -440,6 +440,72 @@
     h1 { font-size: 28px; }
     .items-grid { grid-template-columns: 1fr; }
   }
+
+  /* DELETE ITEM BUTTON */
+  .del-btn {
+    background: none; border: none; cursor: pointer;
+    padding: 3px; color: var(--ink3);
+    opacity: 0;
+    transition: opacity 0.15s;
+    flex-shrink: 0;
+    border-radius: 4px;
+    display: flex; align-items: center;
+  }
+  .item:hover .del-btn { opacity: 1; }
+  .del-btn:hover { color: #C0392B; background: #FDECEA; }
+
+  /* DELETE SECTION BUTTON */
+  .del-section-btn {
+    background: none; border: none; cursor: pointer;
+    font-size: 11px; color: var(--ink3);
+    font-family: 'DM Sans', sans-serif;
+    padding: 3px 8px; border-radius: 4px;
+    transition: all 0.15s;
+  }
+  .del-section-btn:hover { color: #C0392B; background: #FDECEA; }
+
+  /* ADD SECTION */
+  .add-section-wrap {
+    margin-top: 20px;
+    padding-top: 20px;
+    border-top: 1px dashed var(--border);
+  }
+  .add-section-btn {
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    background: none; border: 1px dashed var(--border);
+    border-radius: var(--radius);
+    padding: 10px 16px;
+    font-size: 13px; color: var(--ink3);
+    cursor: pointer; width: 100%;
+    font-family: 'DM Sans', sans-serif;
+    transition: all 0.15s;
+  }
+  .add-section-btn:hover { border-color: var(--ink2); color: var(--ink2); background: var(--surface); border-style: solid; }
+  .add-section-form {
+    display: none;
+    background: var(--surface);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius-lg);
+    padding: 16px 18px;
+    margin-top: 10px;
+  }
+  .add-section-form.open { display: block; }
+  .add-section-fields { display: flex; gap: 8px; margin-bottom: 10px; }
+  .section-icon-input {
+    width: 52px; text-align: center;
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 8px 4px; font-size: 20px;
+    background: var(--bg); outline: none;
+  }
+  .section-icon-input:focus { border-color: var(--ink2); }
+  .section-name-input {
+    flex: 1; border: 1px solid var(--border); border-radius: 6px;
+    padding: 8px 12px; font-size: 13px;
+    font-family: 'DM Sans', sans-serif; color: var(--ink);
+    background: var(--bg); outline: none;
+  }
+  .section-name-input:focus { border-color: var(--ink2); }
+  .add-section-actions { display: flex; gap: 6px; justify-content: flex-end; }
 </style>
 </head>
 <body>
@@ -511,6 +577,11 @@
 
 <script>
 const STORAGE_KEY = 'trip_checklist_v2';
+
+function isItemHidden(stateKey, si, ii, item, builtInCount) {
+  if (ii < builtInCount) return !!(state.hiddenItems?.[stateKey]?.[si + '_' + ii]);
+  return !!item.deleted;
+}
 
 const packData = [
   {
@@ -656,10 +727,12 @@ const defaultReminders = [
 
 // ---- STATE ----
 let state = {
-  pack: {}, // { sectionIdx_itemIdx: { checked, note } }
+  pack: {},
   todo: {},
   reminders: [],
-  customItems: { pack: {}, todo: {} }, // { sectionIdx: [{label, sub}] }
+  customItems: { pack: {}, todo: {} },
+  hiddenItems: { pack: {}, todo: {} },
+  customSections: { pack: [], todo: [] },
 };
 
 function loadState() {
@@ -667,11 +740,15 @@ function loadState() {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) state = JSON.parse(saved);
     if (!state.customItems) state.customItems = { pack: {}, todo: {} };
+    if (!state.hiddenItems) state.hiddenItems = { pack: {}, todo: {} };
+    if (!state.customSections) state.customSections = { pack: [], todo: [] };
     if (!state.reminders || state.reminders.length === 0) {
       state.reminders = defaultReminders.map((r, i) => ({ id: Date.now() + i, text: r.text, type: r.type }));
     }
   } catch(e) {
     state.reminders = defaultReminders.map((r, i) => ({ id: Date.now() + i, text: r.text, type: r.type }));
+    state.hiddenItems = { pack: {}, todo: {} };
+    state.customSections = { pack: [], todo: [] };
   }
 }
 
@@ -688,8 +765,15 @@ function renderPanel(panelId, data) {
   data.forEach((sec, si) => {
     const customItems = (state.customItems[stateKey] && state.customItems[stateKey][si]) || [];
     const allItems = [...sec.items, ...customItems];
-    const total = allItems.length;
-    const done = allItems.filter((_, ii) => state[stateKey][si + '_' + ii]?.checked).length;
+    const builtInCount = sec.items.length;
+    let total = 0, done = 0, itemsHtml = '';
+
+    allItems.forEach((item, ii) => {
+      if (isItemHidden(stateKey, si, ii, item, builtInCount)) return;
+      total++;
+      if (state[stateKey]?.[si + '_' + ii]?.checked) done++;
+      itemsHtml += renderItem(stateKey, si, ii, item, builtInCount);
+    });
 
     html += `<div class="section">
       <div class="section-header">
@@ -700,7 +784,7 @@ function renderPanel(panelId, data) {
         <div class="section-progress">${done}/${total}</div>
       </div>
       <div class="items-grid${total <= 5 ? ' single' : ''}" id="${panelId}_sec_${si}">
-        ${allItems.map((item, ii) => renderItem(stateKey, si, ii, item)).join('')}
+        ${itemsHtml}
       </div>
       <div class="add-item-row">
         <input class="add-input" placeholder="+ Add item to ${sec.section}…" id="add_${panelId}_${si}" onkeydown="if(event.key==='Enter')addItem('${panelId}',${si})">
@@ -709,11 +793,35 @@ function renderPanel(panelId, data) {
     </div>`;
   });
 
+  // Custom sections
+  (state.customSections?.[panelId] || []).forEach(csec => {
+    if (csec.deleted) return;
+    html += renderCustomSection(panelId, csec);
+  });
+
+  // Add section UI
+  html += `<div class="add-section-wrap">
+    <button class="add-section-btn" onclick="showAddSection('${panelId}')">
+      <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      Add section
+    </button>
+    <div class="add-section-form" id="addSecForm_${panelId}">
+      <div class="add-section-fields">
+        <input class="section-icon-input" id="secIcon_${panelId}" value="📋" maxlength="2" title="Emoji icon">
+        <input class="section-name-input" id="secName_${panelId}" placeholder="Section name…" onkeydown="if(event.key==='Enter')addSection('${panelId}')">
+      </div>
+      <div class="add-section-actions">
+        <button class="note-cancel" onclick="hideAddSection('${panelId}')">Cancel</button>
+        <button class="note-save" onclick="addSection('${panelId}')">Create section</button>
+      </div>
+    </div>
+  </div>`;
+
   container.innerHTML = html;
   updateCounts();
 }
 
-function renderItem(stateKey, si, ii, item) {
+function renderItem(stateKey, si, ii, item, builtInCount) {
   const key = si + '_' + ii;
   const itemState = state[stateKey][key] || {};
   const checked = itemState.checked || false;
@@ -737,11 +845,77 @@ function renderItem(stateKey, si, ii, item) {
     <button class="note-btn" onclick="openNote('${stateKey}',${si},${ii})" title="Add note">
       <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
     </button>
+    ${!checked ? `<button class="del-btn" onclick="deleteItem('${stateKey}',${si},${ii},${builtInCount})" title="Remove item">
+      <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="1" y1="1" x2="9" y2="9"/><line x1="9" y1="1" x2="1" y2="9"/></svg>
+    </button>` : ''}
     <div class="note-editor" id="noteEditor_${stateKey}_${si}_${ii}">
       <textarea class="note-textarea" id="noteArea_${stateKey}_${si}_${ii}" placeholder="Add a note or reminder for this item…" rows="2">${note}</textarea>
       <div class="note-actions">
         <button class="note-cancel" onclick="closeNote('${stateKey}',${si},${ii})">Cancel</button>
         <button class="note-save" onclick="saveNote('${stateKey}',${si},${ii})">Save note</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderCustomSection(panelId, csec) {
+  const items = csec.items || [];
+  let total = 0, done = 0, itemsHtml = '';
+  items.forEach((item, ii) => {
+    if (item.deleted) return;
+    total++;
+    if (state[panelId]?.['cs_' + csec.id + '_' + ii]?.checked) done++;
+    itemsHtml += renderCustomItem(panelId, csec.id, ii, item);
+  });
+  return `<div class="section">
+    <div class="section-header">
+      <div class="section-title-row">
+        <div class="section-icon">${csec.icon || '📋'}</div>
+        <div class="section-name">${csec.section}</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <div class="section-progress">${done}/${total}</div>
+        <button class="del-section-btn" onclick="deleteCustomSection('${panelId}',${csec.id})">Delete section</button>
+      </div>
+    </div>
+    <div class="items-grid single" id="${panelId}_csec_${csec.id}">${itemsHtml}</div>
+    <div class="add-item-row">
+      <input class="add-input" placeholder="+ Add item to ${csec.section}…" id="addcs_${panelId}_${csec.id}" onkeydown="if(event.key==='Enter')addCustomSectionItem('${panelId}',${csec.id})">
+      <button class="add-btn" onclick="addCustomSectionItem('${panelId}',${csec.id})">Add</button>
+    </div>
+  </div>`;
+}
+
+function renderCustomItem(panelId, sectionId, ii, item) {
+  const key = 'cs_' + sectionId + '_' + ii;
+  const itemState = state[panelId]?.[key] || {};
+  const checked = itemState.checked || false;
+  const note = itemState.note || '';
+  const hasNote = note.trim().length > 0;
+  return `<div class="item${checked ? ' checked' : ''}${hasNote ? ' has-note' : ''}">
+    <div class="checkbox" onclick="toggleCustomItem('${panelId}',${sectionId},${ii})">
+      <svg class="check-svg" width="11" height="9" viewBox="0 0 11 9" fill="none">
+        <path d="M1 4L4 7.5L10 1" stroke="#2D7A4F" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </div>
+    <div class="item-body" onclick="toggleCustomItem('${panelId}',${sectionId},${ii})">
+      <div class="item-label">${item.label}</div>
+      ${hasNote ? `<div class="item-note-preview">
+        <svg width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/></svg>
+        ${note.substring(0, 50)}${note.length > 50 ? '…' : ''}
+      </div>` : ''}
+    </div>
+    <button class="note-btn" onclick="openCustomNote('${panelId}',${sectionId},${ii})" title="Add note">
+      <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+    </button>
+    ${!checked ? `<button class="del-btn" onclick="deleteCustomItem('${panelId}',${sectionId},${ii})" title="Remove item">
+      <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="1" y1="1" x2="9" y2="9"/><line x1="9" y1="1" x2="1" y2="9"/></svg>
+    </button>` : ''}
+    <div class="note-editor" id="noteEditor_${panelId}_cs_${sectionId}_${ii}">
+      <textarea class="note-textarea" id="noteArea_${panelId}_cs_${sectionId}_${ii}" placeholder="Add a note…" rows="2">${note}</textarea>
+      <div class="note-actions">
+        <button class="note-cancel" onclick="closeCustomNote('${panelId}',${sectionId},${ii})">Cancel</button>
+        <button class="note-save" onclick="saveCustomNote('${panelId}',${sectionId},${ii})">Save note</button>
       </div>
     </div>
   </div>`;
@@ -756,6 +930,20 @@ function toggleItem(stateKey, si, ii) {
   updateCounts();
 }
 
+function deleteItem(stateKey, si, ii, builtInCount) {
+  if (ii < builtInCount) {
+    if (!state.hiddenItems[stateKey]) state.hiddenItems[stateKey] = {};
+    state.hiddenItems[stateKey][si + '_' + ii] = true;
+  } else {
+    const customIdx = ii - builtInCount;
+    if (state.customItems[stateKey]?.[si]?.[customIdx]) {
+      state.customItems[stateKey][si][customIdx].deleted = true;
+    }
+  }
+  saveState();
+  renderPanel(stateKey, stateKey === 'pack' ? packData : todoData);
+}
+
 function reRenderItem(stateKey, si, ii) {
   const data = stateKey === 'pack' ? packData : todoData;
   const customItems = (state.customItems[stateKey] && state.customItems[stateKey][si]) || [];
@@ -763,15 +951,91 @@ function reRenderItem(stateKey, si, ii) {
   const item = allItems[ii];
   if (!item) return;
   const el = document.getElementById(`${stateKey}_item_${si}_${ii}`);
-  if (el) el.outerHTML = renderItem(stateKey, si, ii, item);
+  if (el) el.outerHTML = renderItem(stateKey, si, ii, item, data[si].items.length);
   updateSectionCount(stateKey, si, data, customItems);
 }
 
 function updateSectionCount(stateKey, si, data, customItems) {
-  const allItems = [...data[si].items, ...customItems];
-  const done = allItems.filter((_, ii) => state[stateKey][si + '_' + ii]?.checked).length;
+  const sec = data[si];
+  const allItems = [...sec.items, ...customItems];
+  const builtInCount = sec.items.length;
+  let done = 0, total = 0;
+  allItems.forEach((item, ii) => {
+    if (isItemHidden(stateKey, si, ii, item, builtInCount)) return;
+    total++;
+    if (state[stateKey]?.[si + '_' + ii]?.checked) done++;
+  });
   const progressEl = document.querySelector(`#${stateKey}Sections .section:nth-child(${si + 1}) .section-progress`);
-  if (progressEl) progressEl.textContent = `${done}/${allItems.length}`;
+  if (progressEl) progressEl.textContent = `${done}/${total}`;
+}
+
+// ---- CUSTOM SECTION ACTIONS ----
+function toggleCustomItem(panelId, sectionId, ii) {
+  const key = 'cs_' + sectionId + '_' + ii;
+  if (!state[panelId][key]) state[panelId][key] = {};
+  state[panelId][key].checked = !state[panelId][key].checked;
+  saveState();
+  renderPanel(panelId, panelId === 'pack' ? packData : todoData);
+}
+
+function deleteCustomItem(panelId, sectionId, ii) {
+  const csec = (state.customSections?.[panelId] || []).find(s => s.id == sectionId);
+  if (csec && csec.items[ii]) {
+    csec.items[ii].deleted = true;
+    saveState();
+    renderPanel(panelId, panelId === 'pack' ? packData : todoData);
+  }
+}
+
+function addCustomSectionItem(panelId, sectionId) {
+  const input = document.getElementById(`addcs_${panelId}_${sectionId}`);
+  const val = input ? input.value.trim() : '';
+  if (!val) return;
+  const csec = (state.customSections?.[panelId] || []).find(s => s.id == sectionId);
+  if (csec) {
+    if (!csec.items) csec.items = [];
+    csec.items.push({ label: val, sub: '' });
+    saveState();
+    renderPanel(panelId, panelId === 'pack' ? packData : todoData);
+  }
+}
+
+function deleteCustomSection(panelId, sectionId) {
+  const csec = (state.customSections?.[panelId] || []).find(s => s.id == sectionId);
+  if (csec) { csec.deleted = true; saveState(); renderPanel(panelId, panelId === 'pack' ? packData : todoData); }
+}
+
+function openCustomNote(panelId, sectionId, ii) {
+  const editor = document.getElementById(`noteEditor_${panelId}_cs_${sectionId}_${ii}`);
+  if (editor) { editor.classList.add('open'); document.getElementById(`noteArea_${panelId}_cs_${sectionId}_${ii}`)?.focus(); }
+}
+function closeCustomNote(panelId, sectionId, ii) {
+  document.getElementById(`noteEditor_${panelId}_cs_${sectionId}_${ii}`)?.classList.remove('open');
+}
+function saveCustomNote(panelId, sectionId, ii) {
+  const key = 'cs_' + sectionId + '_' + ii;
+  if (!state[panelId][key]) state[panelId][key] = {};
+  state[panelId][key].note = document.getElementById(`noteArea_${panelId}_cs_${sectionId}_${ii}`)?.value || '';
+  saveState();
+  renderPanel(panelId, panelId === 'pack' ? packData : todoData);
+}
+
+function showAddSection(panelId) {
+  const form = document.getElementById(`addSecForm_${panelId}`);
+  if (form) { form.classList.add('open'); document.getElementById(`secName_${panelId}`)?.focus(); }
+}
+function hideAddSection(panelId) {
+  document.getElementById(`addSecForm_${panelId}`)?.classList.remove('open');
+}
+function addSection(panelId) {
+  const nameEl = document.getElementById(`secName_${panelId}`);
+  const iconEl = document.getElementById(`secIcon_${panelId}`);
+  const name = nameEl?.value.trim();
+  if (!name) { nameEl?.focus(); return; }
+  const icon = iconEl?.value.trim() || '📋';
+  state.customSections[panelId].push({ id: Date.now(), section: name, icon, items: [] });
+  saveState();
+  renderPanel(panelId, panelId === 'pack' ? packData : todoData);
 }
 
 function openNote(stateKey, si, ii) {
@@ -846,8 +1110,20 @@ function updateCounts() {
     data.forEach((sec, si) => {
       const customItems = (state.customItems[stateKey] && state.customItems[stateKey][si]) || [];
       const allItems = [...sec.items, ...customItems];
-      total += allItems.length;
-      done += allItems.filter((_, ii) => state[stateKey][si + '_' + ii]?.checked).length;
+      const builtInCount = sec.items.length;
+      allItems.forEach((item, ii) => {
+        if (isItemHidden(stateKey, si, ii, item, builtInCount)) return;
+        total++;
+        if (state[stateKey]?.[si + '_' + ii]?.checked) done++;
+      });
+    });
+    (state.customSections?.[stateKey] || []).forEach(csec => {
+      if (csec.deleted) return;
+      (csec.items || []).forEach((item, ii) => {
+        if (item.deleted) return;
+        total++;
+        if (state[stateKey]?.['cs_' + csec.id + '_' + ii]?.checked) done++;
+      });
     });
     return { total, done };
   }
